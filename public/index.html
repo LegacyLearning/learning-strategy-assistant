@@ -30,6 +30,7 @@
   <h1>Legacy Learning Consulting — Strategy Draft Tool</h1>
   <p class="small">Paste notes, draft with AI, edit sections, and export.</p>
 
+  <!-- Input card -->
   <section class="card">
     <label>Client name</label>
     <input id="client" type="text" placeholder="Enter client" />
@@ -46,12 +47,12 @@
     <textarea id="notes" placeholder="Paste at least 2–3 sentences"></textarea>
     <div class="btns">
       <button id="aiBtn" class="primary">AI Draft Outcomes + Modules</button>
-      <button id="exportDocx" class="ok">Download Word (.docx)</button>
       <button id="clearAll" class="danger">Clear</button>
       <span id="status" class="status" aria-live="polite"></span>
     </div>
   </section>
 
+  <!-- Content sections -->
   <section class="card">
     <h2>Overview</h2>
     <textarea id="overview"></textarea>
@@ -66,9 +67,18 @@
     <textarea id="modules"></textarea>
   </section>
 
+  <!-- Preview -->
   <section class="card">
     <h2>Preview — Outcomes</h2>
     <div id="outcomesPreview" class="preview">(Generated preview will appear here)</div>
+  </section>
+
+  <!-- Export at bottom -->
+  <section class="card">
+    <h2>Export</h2>
+    <div class="btns">
+      <button id="exportDocx" class="ok">Download Word (.docx)</button>
+    </div>
   </section>
 </div>
 
