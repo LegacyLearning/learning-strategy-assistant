@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Legacy Learning | Strategy Draft Tool</title>
+<style>
+  :root{ --bg:#0f1320; --card:#171b2e; --ink:#e8ecf8; --muted:#b6c0da; --stroke:#24304f; --ok:#22c55e; --bad:#ef4444; }
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:40px auto;padding:0 16px}
+  .card{background:var(--card);border:1px solid var(--stroke);border-radius:14px;padding:18px;margin-top:16px}
+  label{display:block;margin:10px 0 6px;font-weight:600}
+  input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--stroke);background:#0b1022;color:var(--ink)}
+  textarea{min-height:100px;resize:vertical}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  button{padding:10px 14px;border-radius:10px;border:1px solid var(--stroke);background:#101737;color:var(--ink);cursor:pointer;font-weight:600}
+  button[disabled]{opacity:.6;cursor:not-allowed}
+  .primary{background:linear-gradient(180deg, rgba(110,231,183,.2), rgba(96,165,250,.15))}
+  .ok{background:linear-gradient(180deg, rgba(34,197,94,.18), rgba(34,197,94,.08))}
+  .danger{background:linear-gradient(180deg, rgba(239,68,68,.18), rgba(239,68,68,.08))}
+  .status{margin-left:auto;font-size:.9rem}
+  .good{color:var(--ok);font-weight:700}
+  .bad{color:var(--bad);font-weight:700}
+  .small{color:var(--muted);font-size:.9rem}
+  .preview{background:#0b0f1a;border:1px solid var(--stroke);border-radius:10px;padding:12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Legacy Learning Consulting — Strategy Draft Tool</h1>
+  <p class="small">Paste notes, draft with AI, edit sections, and export.</p>
+
+  <section class="card">
+    <label>Client name</label>
+    <input id="client" type="text" placeholder="Enter client" />
+    <label>Scope</label>
+    <select id="scope">
+      <option value="">Select</option>
+      <option>Strategy Development</option>
+      <option>eLearning Build (without Design)</option>
+      <option>eLearning Build (with Design)</option>
+      <option>Video Development</option>
+      <option>Live Learning Experience</option>
+    </select>
+    <label>Kickoff notes / transcript</label>
+    <textarea id="notes" placeholder="Paste at least 2–3 sentences"></textarea>
+    <div class="btns">
+      <button id="aiBtn" class="primary">AI Draft Outcomes + Modules</button>
+      <button id="exportDocx" class="ok">Download Word (.docx)</button>
+      <button id="clearAll" class="danger">Clear</button>
+      <span id="status" class="status" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Overview</h2>
+    <textarea id="overview"></textarea>
+    <h2>Approach</h2>
+    <textarea id="approach"></textarea>
+    <h2>Program Outcomes</h2>
+    <div class="small">At the end of this learning program, learners will be able to:</div>
+    <textarea id="outcomes"></textarea>
+    <h2>Recommended Format</h2>
+    <textarea id="format"></textarea>
+    <h2>Proposed Modules</h2>
+    <textarea id="modules"></textarea>
+  </section>
+
+  <section class="card">
+    <h2>Preview — Outcomes</h2>
+    <div id="outcomesPreview" class="preview">(Generated preview will appear here)</div>
+  </section>
+</div>
+
+<script>
+const el = id => document.getElementById(id);
+const setOK = m => el("status").innerHTML = '<span class="good">'+m+'</span>';
+const setBad = m => el("status").innerHTML = '<span class="bad">'+m+'</span>';
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+
+function refreshOutcomesPreview(){
+  const outs = String(el("outcomes").value||"").split("\n").map(s=>s.trim()).filter(Boolean);
+  el("outcomesPreview").innerHTML = outs.length
+    ? "<strong>At the end of this learning program, learners will be able to:</strong><br><br>" + outs.map(o=>"• "+escapeHtml(o)).join("<br>")
+    : "(No outcomes yet)";
+}
+el("outcomes").addEventListener("input", refreshOutcomesPreview);
+refreshOutcomesPreview();
+
+document.getElementById("aiBtn").addEventListener("click", async () => {
+  try {
+    const notes = el("notes").value.trim();
+    if (!notes || notes.length < 50) { setBad("Please provide at least ~50 characters."); return; }
+    const client = el("client").value.trim();
+    const scope  = el("scope").value;
+
+    const res = await fetch("/api/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client, scope, text: notes, max_outcomes: 8, target_modules: 6 })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+
+    const strip = s => String(s).trim().replace(/^\s*[-•]\s*/,"").replace(/\.$/,"");
+    const title = s => String(s).toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    const uniq = arr => { const seen=new Set,out=[]; for(const i of arr){ const k=String(i).toLowerCase(); if(!seen.has(k)){ seen.add(k); out.push(i); } } return out; };
+
+    const outs = Array.isArray(data.outcomes) ? uniq(data.outcomes.map(strip).filter(Boolean)) : [];
+    const mods = Array.isArray(data.modules) ? uniq(data.modules.map(title).filter(Boolean)) : [];
+
+    if (outs.length) el("outcomes").value = outs.map(o=>"- "+o).join("\n");
+    if (mods.length) el("modules").value  = mods.map((m,i)=>`${i+1}. ${m}`).join("\n");
+
+    if (!el("overview").value.trim()) {
+      const snip = notes.split(/\s+/).slice(0,50).join(" ");
+      el("overview").value = (client ? client + ": " : "") + "Initial context and goals (draft): " + snip + (notes.length>snip.length ? "…" : "");
+    }
+    if (!el("format").value.trim()) {
+      el("format").value = "Blended solution combining self-paced eLearning, live workshop(s), guided practice with feedback, and on-the-job coaching.";
+    }
+
+    refreshOutcomesPreview();
+    setOK("AI draft ready.");
+  } catch (e) {
+    setBad(e.message || "AI drafting failed.");
+  }
+});
+
+document.getElementById("exportDocx").addEventListener("click", async () => {
+  try {
+    const payload = {
+      client: el("client").value.trim() || "Client",
+      scope:  el("scope").value || "Scope",
+      overview: el("overview").value || "",
+      approach: el("approach").value || "",
+      outcomes: String(el("outcomes").value||"").split("\n").map(s=>s.replace(/^[-•\s]+/,"")).filter(Boolean),
+      format:   el("format").value || "",
+      modules:  String(el("modules").value||"").split("\n").map(s=>s.replace(/^\d+\.\s*/,"")).filter(Boolean)
+    };
+
+    const res = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const safeBase = (payload.client || "strategy").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"") || "strategy";
+    const fileName = `${safeBase}-learning-strategy.docx`;
+
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName; a.style.display = "none";
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1000);
+
+    setOK("Download started.");
+  } catch (e) {
+    setBad(e.message || "Export failed.");
+  }
+});
+
+document.getElementById("clearAll").addEventListener("click", () => {
+  ["client","scope","notes","overview","approach","outcomes","format","modules"].forEach(id=>el(id).value="");
+  refreshOutcomesPreview();
+  setOK("Cleared.");
+});
+</script>
+</body>
+</html>
