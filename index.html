@@ -1,0 +1,117 @@
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  try {
+    const body = await readJson(req);
+    const client = String(body.client || "");
+    const scope = String(body.scope || "");
+    const text = String(body.text || "");
+    const max_outcomes = Number(body.max_outcomes || 8);
+    const target_modules = Number(body.target_modules || 6);
+    const fileNames = Array.isArray(body.fileNames) ? body.fileNames.map(String) : [];
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY missing" });
+    }
+    if (!text || text.trim().length < 50) {
+      return res.status(400).json({ error: "Provide at least ~50 characters of text." });
+    }
+
+    const sys =
+      "You are an instructional design assistant for Legacy Learning Consulting. " +
+      "Write behavioral, observable program outcomes using strong action verbs. " +
+      "Do NOT start outcomes with 'By the end' or 'Learners will be able to'. " +
+      "Assume the UI shows the header: 'At the end of this learning program, learners will be able to:'. " +
+      "Then propose high-level module titles seeded from the outcomes/topics; avoid duplicates and fluff.";
+
+    let user = "";
+    user += "Client: " + (client || "TBD") + "\n";
+    user += "Scope: " + (scope || "TBD") + "\n";
+    if (fileNames.length) {
+      user += "Uploaded files (names only for now): " + fileNames.join(", ") + "\n";
+    }
+    user += `\nFrom the following materials, produce up to ${max_outcomes} outcomes and ${target_modules} module titles.\n\n`;
+    user += "TEXT:\n" + text.slice(0, 180000);
+
+    const resp = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        input: [
+          { role: "system", content: sys },
+          { role: "user", content: user }
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "legacy_outline",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                outcomes: { type: "array", items: { type: "string" } },
+                modules:  { type: "array", items: { type: "string" } },
+                notes:    { type: "string" }
+              },
+              required: ["outcomes", "modules", "notes"]
+            }
+          }
+        }
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      return res.status(502).json({ error: "OpenAI error", detail: err });
+    }
+    const data = await resp.json();
+
+    // Extract JSON block
+    let block = "";
+    if (typeof data.output_text === "string" && data.output_text.trim()) {
+      block = data.output_text;
+    } else {
+      try {
+        const seg = data?.output?.[0]?.content?.find?.(c => typeof c.text === "string" && c.text.trim());
+        block = seg?.text ?? "";
+      } catch { block = ""; }
+    }
+
+    let parsed;
+    try { parsed = block ? JSON.parse(block) : null; } catch { parsed = data?.response ?? null; }
+    if (!parsed || typeof parsed !== "object") {
+      return res.status(502).json({ error: "Model returned unexpected shape" });
+    }
+
+    const strip = (s) => String(s).trim()
+      .replace(/^(?:\s*(?:by\s+the\s+end|learners?\s+will\s+be\s+able\s+to)\s*:?\s*)/i, "")
+      .replace(/\.$/, "");
+    const title = (s) => String(s).toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    const uniq = (arr) => { const seen=new Set, out=[]; for (const x of arr){ const k=String(x).toLowerCase(); if(!seen.has(k)){ seen.add(k); out.push(x); } } return out; };
+
+    const outcomes = uniq((parsed.outcomes || []).map(strip).filter(Boolean)).slice(0, max_outcomes);
+    const modules  = uniq((parsed.modules  || []).map(s => title(String(s).trim())).filter(Boolean)).slice(0, target_modules);
+
+    return res.status(200).json({ outcomes, modules, notes: parsed.notes || "" });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || "Server error" });
+  }
+}
+
+async function readJson(req) {
+  const raw = await new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => resolve(data));
+    req.on("error", reject);
+  });
+  return raw ? JSON.parse(raw) : {};
+}
