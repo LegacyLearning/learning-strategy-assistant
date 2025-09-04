@@ -1,46 +1,62 @@
-// api/export.js
-// Supports two modes:
-// 1) GET /api/export?id=<submissionId>  (admin-only) -> returns .docx
-// 2) POST /api/export  (client posts the submission JSON) -> returns .docx
+// api/admin/mark.js
+// Updates a submission's status in Vercel Blob: new | in_progress | done
 
-import { getSubmissionById } from '../lib/blob.js';
-import { generateDocxBuffer } from '../lib/export/docx.js';
-
-export const config = { api: { bodyParser: { sizeLimit: '1mb' } } };
+export const config = {
+  api: { bodyParser: { sizeLimit: '1mb' } }
+};
 
 export default async function handler(req, res) {
-  try {
-    let data;
+  // Require admin token
+  if (req.headers['x-admin-token'] !== process.env.ADMIN_TOKEN) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'method_not_allowed' });
+  }
 
-    if (req.method === 'GET' && req.query.id) {
-      // Admin GET by id
-      if (req.headers['x-admin-token'] !== process.env.ADMIN_TOKEN) {
-        return res.status(401).json({ error: 'unauthorized' });
-      }
-      data = await getSubmissionById(String(req.query.id));
-    } else if (req.method === 'POST') {
-      // Existing client flow
-      data = req.body;
-    } else {
-      return res.status(400).json({ error: 'unsupported' });
+  try {
+    const { id, status } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'missing_id' });
+
+    const allowed = new Set(['new', 'in_progress', 'done']);
+    if (!allowed.has(status)) {
+      return res.status(400).json({ error: 'invalid_status', allowed: Array.from(allowed) });
     }
 
-    // Build .docx buffer
-    const buf = await generateDocxBuffer(data);
+    // Load current record
+    const { getSubmissionById } = await import('../../lib/blob.js');
+    let record;
+    try {
+      record = await getSubmissionById(String(id));
+    } catch (e) {
+      if (String(e.message || '').includes('not_found')) {
+        return res.status(404).json({ error: 'not_found' });
+      }
+      throw e;
+    }
 
-    // Nice filename based on organization
-    const filename =
-      (data.organization?.replace(/[^a-z0-9-_]+/gi, '_') || 'strategy_draft') +
-      '.docx';
+    // Update fields
+    const updated = {
+      ...record,
+      id: record.id || String(id),
+      status,
+      updated_at: new Date().toISOString()
+    };
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    );
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.status(200).send(Buffer.from(buf));
+    // Overwrite the blob JSON (submissions/<id>.json)
+    const { put } = await import('@vercel/blob');
+    const pathname = `submissions/${String(id)}.json`;
+    await put(pathname, JSON.stringify(updated, null, 2), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false
+      // no token param: SDK will use the project's default Blob token
+    });
+
+    return res.status(200).json({ ok: true, id, status });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'export_failed' });
+    return res.status(500).json({ error: 'update_failed' });
   }
 }
+
