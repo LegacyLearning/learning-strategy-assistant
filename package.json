@@ -1,1 +1,8 @@
-
+{
+  "name": "strategy-draft-tool",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "docx": "8.5.0"
+  }
+}
